@@ -71,8 +71,8 @@ process BWAMEM {
         | k8 ${params.alt_js} -p ${sampleId}-${part}.hla ${params.ref}.alt \
         | samtools view -Sb -  \
         | samtools fixmate -m - -  \
-        | samtools sort -@ ${task.cpus} -  \
-        | samtools markdup -O CRAM  --write-index --reference ${params.ref} -@ ${task.cpus} - ${sampleId}-${part}.mkdup.cram
+        | samtools sort -m 1G -@ ${task.cpus - 8 } -  \
+        | samtools markdup -O CRAM  --write-index --reference ${params.ref} -@ ${task.cpus - 8} - ${sampleId}-${part}.mkdup.cram
 
    run-HLA ${sampleId}-${part}.hla > ${sampleId}-${part}.hla.top 2> ${sampleId}-${part}.log.hla;
 	 touch ${sampleId}-${part}.hla.HLA-dummy.gt; cat ${sampleId}-${part}.hla.HLA*.gt | grep ^GT | cut -f2- > ${sampleId}-${part}.hla.all;
@@ -86,8 +86,8 @@ process BWAMEM {
   	| k8 ${params.alt_js} -p ${sampleId}-${part}.hla hs38DH.fa.alt \
     | samtools view -Sb -  \
     | samtools fixmate -m - -  \
-    | samtools sort -@ ${task.cpus} -  \
-    | samtools markdup -O CRAM  --write-index --reference ${params.ref} -@ ${task.cpus} - ${sampleId}-${part}.mkdup.cram
+    | samtools sort -m 1G -@ ${task.cpus - 8 } -  \
+    | samtools markdup -O CRAM  --write-index --reference ${params.ref} -@ ${task.cpus - 8} - ${sampleId}-${part}.mkdup.cram
 
      """
     }else{
@@ -161,6 +161,7 @@ process QUALIMAP {
     input:
     tuple val(sampleId), path(cram), path(crai)
     path reference
+    path fai
 
     output:
     path "${sampleId}", emit: qualimap_results
@@ -182,25 +183,25 @@ process QUALIMAP {
 
      # ---------- 1)  Crear FIFO ----------
     fifo="${sampleId}.bam.pipe"
-     mkfifo "$fifo"
+     mkfifo "\$fifo"
 
     # ---------- 2)  Convertir CRAM → BAM en segundo plano ----------
-     samtools view -@ ${task.cpus} -T ${reference} -b ${cram} > "$fifo" &
+     samtools view -@ ${task.cpus - 2 } -T ${reference} -b ${cram} > "\$fifo" &
      sam_pid=\$!
 
      # ---------- 3)  Lanzar Qualimap leyendo del FIFO ----------
       qualimap bamqc \
-        -bam    "$fifo" \
+        -bam    "\$fifo" \
         -outdir ${sampleId} \
         -nt     ${task.cpus} \
         --java-mem-size=${task.memory.toGiga()}G
        rc=\$?
 
      # ---------- 4)  Limpiar ----------
-     kill "$sam_pid" 2>/dev/null || true   # por si qualimap terminó antes
-     rm -f "$fifo"
+     kill "\$sam_pid" 2>/dev/null || true   # por si qualimap terminó antes
+     rm -f "\$fifo"
 
-    exit "$rc"
+    exit "\$rc"
     """
     }
 }
@@ -217,6 +218,7 @@ process DEEPVARIANT_AUTOSOMES{
 	input:
 	tuple val(sampleId), file(cram), file(crai)
   path reference
+  path fai
 	output:
   tuple val(sampleId), file("${sampleId}.autosomes.vcf.gz")  , emit: vcf
 	tuple val(sampleId), file("${sampleId}.autosomes.g.vcf.gz") , emit: gvcf
@@ -225,7 +227,7 @@ process DEEPVARIANT_AUTOSOMES{
 	script:
 	if (params.debug == true){
   """
-  REGION_AUTOSOMES="chr1 chr2 chr3 chr4 chr5 chr6 chr7 chr8 chr9 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19 chr20 chr21 chr22"
+  REGION_AUTOSOMES="${params.autosomes}"
         echo  /opt/deepvariant/bin/run_deepvariant --model_type WGS \\
                 --ref=${reference} \\
                 --reads=${cram} \\
@@ -242,8 +244,8 @@ process DEEPVARIANT_AUTOSOMES{
 	else {
     	"""
       # we call in autosomes
-      REGION_AUTOSOMES="chr1 chr2 chr3 chr4 chr5 chr6 chr7 chr8 chr9 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19 chr20 chr21 chr22"
-      /opt/deepvariant/bin/run_deepvariant --model_type WGS\\
+      REGION_AUTOSOMES="${params.autosomes}"
+      /opt/deepvariant/bin/run_deepvariant --model_type WGS  \\
       --ref=${params.ref} \\
       --reads=${cram} \\
       --output_vcf=${sampleId}.autosomes.vcf.gz \\
@@ -305,6 +307,7 @@ process DEEPVARIANT_SEX{
 	input:
 	tuple val(sampleId), file(cram), file(crai)
   path reference
+  path fai
 	output:
   tuple val(sampleId), file("${sampleId}.sex.vcf.gz")  , emit: vcf
 	tuple val(sampleId), file("${sampleId}.sex.g.vcf.gz") , emit: gvcf
@@ -313,7 +316,7 @@ process DEEPVARIANT_SEX{
 	script:
 	if (params.debug == true){
   """
-  REGION_SEX="chrX chrY"
+  REGION_SEX="${params.sex}"
   HAPLOID_CONTIGS="chrX,chrY"
   PAR_BED="GRCh38_PAR.bed"
         echo  /opt/deepvariant/bin/run_deepvariant --model_type WGS \\
@@ -334,10 +337,10 @@ process DEEPVARIANT_SEX{
 	else {
     	"""
       #we call in sex chromosomes in hg38
-      REGION_SEX="chrX chrY"
+      REGION_SEX="${params.sex}"
       HAPLOID_CONTIGS="chrX,chrY"
       PAR_BED="GRCh38_PAR.bed"
-        /opt/deepvariant/bin/run_deepvariant --model_type WGS\\
+        /opt/deepvariant/bin/run_deepvariant --model_type WGS \\
         --ref=${reference} \\
         --reads=${cram} \\
         --output_vcf=${sampleId}.sex.vcf.gz \\
@@ -441,6 +444,7 @@ workflow {
 
    // read_pairs_ch.view()
     ref = file(params.ref)
+    ref_fai = file(params.ref+".fai")
     //fastqc read quality
     FASTQC(read_pairs_ch)
     //read aligment alt/hla
@@ -456,17 +460,17 @@ workflow {
     //Coverage Stats from cram files
     DEPTH(MERGEB.out.mbams)
     //variant calling witn DeepVariant
-    DEEPVARIANT_AUTOSOMES(MERGEB.out.mbams,ref)
+    DEEPVARIANT_AUTOSOMES(MERGEB.out.mbams,ref,ref_fai)
     allgvcf=DEEPVARIANT_AUTOSOMES.out.gvcf_file.collect().map { gvcf_list ->
         tuple('all', gvcf_list)
     }
     //allgvcf.view()
     GLNEXUS_DEEPVARIANT_AUTOSOMES(allgvcf)
 
-    DEEPVARIANT_SEX(MERGEB.out.mbams,ref)
+    DEEPVARIANT_SEX(MERGEB.out.mbams,ref,ref_fai)
     allgvcfsex=DEEPVARIANT_SEX.out.gvcf_file.collect().map { gvcf_list ->
         tuple('all', gvcf_list)
     }
     //allgvcf.view()
-    GLNEXUS_DEEPVARIANT_SEX(allgvcfsex)
+    GLNEXUS_DEEPVARIANT_SEX(allgvcfsex) 
 }
