@@ -456,7 +456,7 @@ workflow {
     MERGEB(groups,ref)
     //Quality of alignments
     //MERGEB.out.mbams.view()
-    QUALIMAP(MERGEB.out.mbams,ref)
+    QUALIMAP(MERGEB.out.mbams,ref,ref_fai)
     //Coverage Stats from cram files
     DEPTH(MERGEB.out.mbams)
     //variant calling witn DeepVariant
