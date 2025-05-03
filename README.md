@@ -11,11 +11,17 @@ A nextflow (DSL 2) Whole‑Genome Short‑Read Pipeline (BWA‑MEM2 → DeepV
 
 FASTQ ─► FASTQC ─► BWA‑MEM2 ──► MERGEB ─► QUALIMAP 
                                    └─► DEPTH (mosdepth)
-                                   └─► DEEPVARIANT ─┬─► per‑sample VCF
-                                                    └─► per‑sample gVCF
+                                   └─► DEEPVARIANT_AUTOSOMES ─┬─► per‑sample VCF
+                                            |                  └─► per‑sample gVCF
                                             │
                                             ▼
-                                          GLnexus (cohort merge) ─► joint BCF
+                                          GLnexus (cohort merge) ─► joint autosomes BCF
+  
+                                   └─► DEEPVARIANT_SEX ─┬─► per‑sample VCF
+                                            |            └─► per‑sample gVCF
+                                            │
+                                            ▼
+                                          GLnexus (cohort merge) ─► joint SEX BCF
 
 ```
 
