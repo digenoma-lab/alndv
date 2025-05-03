@@ -1,0 +1,4 @@
+sampleId,part,read1,read2
+test2,1,./test_reads/test2.R1.fq.gz,./test_reads/test2.R2.fq.gz
+test2,2,./test_reads/test3.R1.fq.gz,./test_reads/test3.R2.fq.gz
+test,1,./test_reads/test.R1.fq.gz,./test_reads/test.R2.fq.gz
