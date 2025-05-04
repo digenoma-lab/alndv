@@ -412,13 +412,13 @@ process DEPTH{
     script:
     if(params.debug == true){
     """
-    echo mosdepth -f ${params.ref} -t $task.cpus ${sampleId}.depth $cram
+    echo mosdepth -n -b 1000000 -f ${params.ref} -t $task.cpus ${sampleId}.depth $cram
     touch ${sampleId}.depth.mosdepth.dist.txt
     touch ${sampleId}.depth.mosdepth.summary.txt
     """
     }else{
     """
-    mosdepth -f ${params.ref} -t $task.cpus ${sampleId}.depth $cram
+    mosdepth -n -b 1000000  -f ${params.ref} -t $task.cpus ${sampleId}.depth $cram
     """
     }
 }
