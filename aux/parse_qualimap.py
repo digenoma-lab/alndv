@@ -65,7 +65,8 @@ def main(files):
     for fp in files:
         stats = parse_report(fp)
         values = [str(stats[f]) for f in FIELDS]
-        print(f"{pathlib.Path(fp).name}\t" + "\t".join(values))
+        #print(f"{pathlib.Path(fp).name}\t" + "\t".join(values))
+        print(fp+"\t" + "\t".join(values))
 
 if __name__ == "__main__":
     reports = sys.argv[1:] or glob.glob("*.genome_result*.txt") or glob.glob("*.genome_results*.txt")

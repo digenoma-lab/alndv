@@ -273,7 +273,7 @@ process GLNEXUS_DEEPVARIANT_AUTOSOMES{
   tuple val(sampleId), path(gvcfs)
 
 	output:
-   tuple val(sampleId), path("${sampleId}.autosomes.glx.bcf"), emit: bcf
+         path("${sampleId}.*.glx.bcf"), emit: bcf
 
 	script:
 	def files = gvcfs.join(' ')
@@ -289,8 +289,17 @@ process GLNEXUS_DEEPVARIANT_AUTOSOMES{
   }else{
     """
     glnexus_cli  --threads $task.cpus \\
-        --mem-gbytes $task.memory.giga \\
-        --config DeepVariant_unfiltered ${files} >  ${sampleId}.autosomes.glx.bcf
+        --mem-gbytes ${task.memory.giga-100} \\
+       --config DeepVariant_unfiltered ${files} >  ${sampleId}.autosomes.glx.bcf
+ #  for chr in {1..22}; do
+  #    echo -e "chr\${chr}\t0\t999999999" > chr\${chr}.bed
+  # done
+
+   # for chr in {1..22}; do
+   #    glnexus_cli --threads $task.cpus --mem-gbytes ${task.memory.giga-20} --config DeepVariant_unfiltered --bed chr\${chr}.bed ${files} > ${sampleId}.chr\${chr}.glx.bcf
+    #   rm -fr GLnexus.DB
+   # done
+
     """
   }
 }
