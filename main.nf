@@ -317,6 +317,7 @@ process DEEPVARIANT_SEX{
 	tuple val(sampleId), file(cram), file(crai)
   path reference
   path fai
+  path bed_sex
 	output:
   tuple val(sampleId), file("${sampleId}.sex.vcf.gz")  , emit: vcf
 	tuple val(sampleId), file("${sampleId}.sex.g.vcf.gz") , emit: gvcf
@@ -358,7 +359,7 @@ process DEEPVARIANT_SEX{
         --num_shards=${task.cpus} \\
         --vcf_stats_report=true \\
         --haploid_contigs \"\$HAPLOID_CONTIGS\" \\
-        --par_regions_bed "${baseDir}/aux/\$PAR_BED" \\
+        --par_regions_bed "\$PAR_BED" \\
         --regions \"\$REGION_SEX\"
    	"""
 	}
@@ -475,8 +476,8 @@ workflow {
     }
     //allgvcf.view()
     GLNEXUS_DEEPVARIANT_AUTOSOMES(allgvcf)
-
-    DEEPVARIANT_SEX(MERGEB.out.mbams,ref,ref_fai)
+    bed_sex=file("${baseDir}/aux/GRCh38_PAR.bed")
+    DEEPVARIANT_SEX(MERGEB.out.mbams,ref,ref_fai,bed_sex)
     allgvcfsex=DEEPVARIANT_SEX.out.gvcf_file.collect().map { gvcf_list ->
         tuple('all', gvcf_list)
     }
