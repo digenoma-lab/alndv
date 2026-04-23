@@ -7,7 +7,7 @@ process FASTQC {
 
 
     input:
-    tuple val(sampleId), val(part), file(read1), file(read2)
+    tuple val(sampleId), val(part), val(runDV), file(read1), file(read2)
 
     output:
     path("${sampleId}-${part}.fastqc"), emit: fqc
@@ -38,10 +38,10 @@ process BWAMEM {
     publishDir "$params.outdir/BWA/HLA", mode: "copy", pattern: '*.hla.all'
 
     input:
-    tuple val(sampleId), val(part), file(read1), file(read2)
+    tuple val(sampleId), val(part), val(runDV), file(read1), file(read2)
 
     output:
-    tuple val("${sampleId}"), val("${part}"), file("${sampleId}-${part}.mkdup.cram"),file("${sampleId}-${part}.mkdup.cram.crai"), emit: bams
+    tuple val("${sampleId}"), val(runDV), val("${part}"), file("${sampleId}-${part}.mkdup.cram"),file("${sampleId}-${part}.mkdup.cram.crai"), emit: bams
     path("${sampleId}-${part}.log.bwamem")
     path("${sampleId}-${part}.hla.all") , optional: true
     path("${sampleId}-${part}.log.hla") , optional: true
@@ -115,11 +115,11 @@ process MERGEB{
   container "oras://community.wave.seqera.io/library/bwa-mem2_instrain_multiqc_qualimap_samtools:850f96dbd001458f"
 
   input:
-  tuple val(sampleId), val(parts), file(cramFiles), file(craiFiles)
+  tuple val(sampleId), val(runDV), val(parts), file(cramFiles), file(craiFiles)
   path reference
 
   output:
-  tuple val(sampleId), file("${sampleId}.merged.cram"), file("${sampleId}.merged.cram.crai") ,emit: mbams
+  tuple val(sampleId), val(runDV), file("${sampleId}.merged.cram"), file("${sampleId}.merged.cram.crai") ,emit: mbams
 
   script:
   def filesb = cramFiles instanceof List ? cramFiles : [cramFiles]
@@ -159,7 +159,7 @@ process QUALIMAP {
     container "oras://community.wave.seqera.io/library/bwa-mem2_instrain_multiqc_qualimap_samtools:850f96dbd001458f"
 
     input:
-    tuple val(sampleId), path(cram), path(crai)
+    tuple val(sampleId), val(runDV), path(cram), path(crai)
     path reference
     path fai
 
@@ -216,7 +216,7 @@ process DEEPVARIANT_AUTOSOMES{
     container "docker.io/google/deepvariant:1.8.0"
 
 	input:
-	tuple val(sampleId), file(cram), file(crai)
+	tuple val(sampleId), val(runDV), file(cram), file(crai)
   path reference
   path fai
 	output:
@@ -314,7 +314,7 @@ process DEEPVARIANT_SEX{
     container "docker.io/google/deepvariant:1.8.0"
 
 	input:
-	tuple val(sampleId), file(cram), file(crai)
+	tuple val(sampleId), val(runDV), file(cram), file(crai)
   path reference
   path fai
   path bed_sex
@@ -413,7 +413,7 @@ process DEPTH{
     publishDir "$params.outdir/DEPTH", mode: "copy"
 
     input:
-    tuple val(sampleId), file(cram), file(crai)
+    tuple val(sampleId), val(runDV), file(cram), file(crai)
 
 
     output:
@@ -433,6 +433,25 @@ process DEPTH{
     }
 }
 
+def parseRunDV(value) {
+    if ( value == null ) {
+        return true
+    }
+
+    def normalized = value.toString().trim().toLowerCase()
+    if ( normalized == '' ) {
+        return true
+    }
+    if ( normalized in ['true', 't', '1', 'yes', 'y'] ) {
+        return true
+    }
+    if ( normalized in ['false', 'f', '0', 'no', 'n'] ) {
+        return false
+    }
+
+    throw new IllegalArgumentException("Invalid runDV value '${value}'. Use true/false, yes/no, or 1/0.")
+}
+
 
 
 //we declare the workflow for index
@@ -442,12 +461,13 @@ workflow {
     //we read pairs from regex
     if(params.reads != null){
     // --reads "./reads/B087*.merge.{1,2}.fq.gz"
-    read_pairs_ch = channel.fromFilePairs(params.reads)
+    read_pairs_ch = channel.fromFilePairs(params.reads) \
+        | map { sampleId, reads -> tuple(sampleId, '1', true, reads[0], reads[1]) }
     }else if(params.csv != null){
     //we reads pairs from csv
     read_pairs_ch=Channel.fromPath(params.csv) \
         | splitCsv(header:true) \
-        | map { row-> tuple(row.sampleId, row.part,  file(row.read1), file(row.read2)) }
+        | map { row-> tuple(row.sampleId, row.part, parseRunDV(row.runDV), file(row.read1), file(row.read2)) }
     }else{
         println "Error: reads regex or path"
     }
@@ -460,7 +480,13 @@ workflow {
     //read aligment alt/hla
     BWAMEM(read_pairs_ch)
     //we do merge the bams by sample ID
-    groups=BWAMEM.out.bams.groupTuple(by: 0)
+    groups=BWAMEM.out.bams.groupTuple(by: 0).map { sampleId, runDVValues, parts, cramFiles, craiFiles ->
+        def uniqueRunDV = (runDVValues instanceof List ? runDVValues : [runDVValues]).unique()
+        if ( uniqueRunDV.size() != 1 ) {
+            throw new IllegalArgumentException("Sample ${sampleId} has inconsistent runDV values across rows: ${uniqueRunDV}")
+        }
+        tuple(sampleId, uniqueRunDV[0], parts, cramFiles, craiFiles)
+    }
     //groups.view()
    // groups.view()
     MERGEB(groups,ref)
@@ -470,15 +496,17 @@ workflow {
     //Coverage Stats from cram files
     DEPTH(MERGEB.out.mbams)
     //variant calling witn DeepVariant
-    DEEPVARIANT_AUTOSOMES(MERGEB.out.mbams,ref,ref_fai)
-    allgvcf=DEEPVARIANT_AUTOSOMES.out.gvcf_file.collect().map { gvcf_list ->
+    deepvariant_autosomes_samples = MERGEB.out.mbams.filter { sampleId, runDV, cram, crai -> runDV }
+    DEEPVARIANT_AUTOSOMES(deepvariant_autosomes_samples,ref,ref_fai)
+    allgvcf=DEEPVARIANT_AUTOSOMES.out.gvcf_file.collect().filter { gvcf_list -> gvcf_list }.map { gvcf_list ->
         tuple('all', gvcf_list)
     }
     //allgvcf.view()
     GLNEXUS_DEEPVARIANT_AUTOSOMES(allgvcf)
     bed_sex=file("${baseDir}/aux/GRCh38_PAR.bed")
-    DEEPVARIANT_SEX(MERGEB.out.mbams,ref,ref_fai,bed_sex)
-    allgvcfsex=DEEPVARIANT_SEX.out.gvcf_file.collect().map { gvcf_list ->
+    deepvariant_sex_samples = MERGEB.out.mbams.filter { sampleId, runDV, cram, crai -> runDV }
+    DEEPVARIANT_SEX(deepvariant_sex_samples,ref,ref_fai,bed_sex)
+    allgvcfsex=DEEPVARIANT_SEX.out.gvcf_file.collect().filter { gvcf_list -> gvcf_list }.map { gvcf_list ->
         tuple('all', gvcf_list)
     }
     //allgvcf.view()

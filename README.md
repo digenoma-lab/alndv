@@ -76,8 +76,19 @@ nextflow run main.nf --csv reads-test.cvs --ref test.fa --debug true
 | Flag      | Description                                                  |
 | --------- | ------------------------------------------------------------ |
 | `--reads` | Glob pattern for paired FASTQ (`sample_*{1,2}.fq.gz`) **or** |
-| `--csv`   | CSV with columns `sampleId,part,read1,read2`                 |
+| `--csv`   | CSV with columns `sampleId,part,runDV,read1,read2`           |
 | `--ref`   | Reference FASTA indexed with `.fai` and `.dict`              |
+
+Example CSV:
+
+```csv
+sampleId,part,runDV,read1,read2
+sampleA,1,true,/data/sampleA_R1.fastq.gz,/data/sampleA_R2.fastq.gz
+sampleA,2,true,/data/sampleA_rep2_R1.fastq.gz,/data/sampleA_rep2_R2.fastq.gz
+sampleB,1,false,/data/sampleB_R1.fastq.gz,/data/sampleB_R2.fastq.gz
+```
+
+`runDV` accepts `true/false`, `yes/no`, or `1/0`. When the column is omitted or left blank, the pipeline defaults to `true` to preserve the previous behavior.
 
 ---
 
