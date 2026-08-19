@@ -452,6 +452,40 @@ def parseRunDV(value) {
     throw new IllegalArgumentException("Invalid runDV value '${value}'. Use true/false, yes/no, or 1/0.")
 }
 
+def hasInputValue(value) {
+    return value != null && value.toString().trim() != ''
+}
+
+def parseSampleRow(row) {
+    if ( !hasInputValue(row.sampleId) ) {
+        throw new IllegalArgumentException("Every CSV row must define sampleId.")
+    }
+
+    def hasRead1 = hasInputValue(row.read1)
+    def hasRead2 = hasInputValue(row.read2)
+    def hasCram = hasInputValue(row.cram)
+    def hasCrai = hasInputValue(row.crai)
+    def hasReads = hasRead1 && hasRead2
+    def hasCramPair = hasCram && hasCrai
+
+    if ( hasRead1 != hasRead2 ) {
+        throw new IllegalArgumentException("Sample ${row.sampleId} must define both read1 and read2.")
+    }
+    if ( hasCram != hasCrai ) {
+        throw new IllegalArgumentException("Sample ${row.sampleId} must define both cram and crai.")
+    }
+    if ( hasReads == hasCramPair ) {
+        throw new IllegalArgumentException("Sample ${row.sampleId} must define either read1/read2 or cram/crai, but not both.")
+    }
+
+    def part = hasInputValue(row.part) ? row.part.toString().trim() : '1'
+    def runDV = parseRunDV(row.runDV)
+    if ( hasReads ) {
+        return tuple('fastq', row.sampleId, part, runDV, file(row.read1), file(row.read2))
+    }
+    return tuple('cram', row.sampleId, part, runDV, file(row.cram), file(row.crai))
+}
+
 
 
 //we declare the workflow for index
@@ -463,13 +497,25 @@ workflow {
     // --reads "./reads/B087*.merge.{1,2}.fq.gz"
     read_pairs_ch = channel.fromFilePairs(params.reads) \
         | map { sampleId, reads -> tuple(sampleId, '1', true, reads[0], reads[1]) }
+    cram_pairs_ch = Channel.empty()
     }else if(params.csv != null){
-    //we reads pairs from csv
-    read_pairs_ch=Channel.fromPath(params.csv) \
+    // CSV rows may contain FASTQ pairs or an already aligned CRAM/CRAI pair.
+    sample_rows_ch=Channel.fromPath(params.csv, checkIfExists: true) \
         | splitCsv(header:true) \
-        | map { row-> tuple(row.sampleId, row.part, parseRunDV(row.runDV), file(row.read1), file(row.read2)) }
+        | map { row -> parseSampleRow(row) }
+
+    sample_inputs = sample_rows_ch.branch {
+        fastq: it[0] == 'fastq'
+        cram:  it[0] == 'cram'
+    }
+    read_pairs_ch = sample_inputs.fastq.map { type, sampleId, part, runDV, read1, read2 ->
+        tuple(sampleId, part, runDV, read1, read2)
+    }
+    cram_pairs_ch = sample_inputs.cram.map { type, sampleId, part, runDV, cram, crai ->
+        tuple(sampleId, runDV, cram, crai)
+    }
     }else{
-        println "Error: reads regex or path"
+        throw new IllegalArgumentException("Provide --reads or --csv.")
     }
 
    // read_pairs_ch.view()
@@ -490,13 +536,25 @@ workflow {
     //groups.view()
    // groups.view()
     MERGEB(groups,ref)
+
+    // Input CRAMs are already merged and enter the workflow downstream of MERGEB.
+    // Grouping here also prevents duplicate or mixed FASTQ/CRAM entries per sample.
+    analysis_crams = MERGEB.out.mbams.mix(cram_pairs_ch).groupTuple(by: 0).map { sampleId, runDVValues, cramFiles, craiFiles ->
+        if ( cramFiles.size() != 1 ) {
+            throw new IllegalArgumentException("Sample ${sampleId} must resolve to exactly one merged CRAM, found ${cramFiles.size()}.")
+        }
+        def uniqueRunDV = runDVValues.unique()
+        if ( uniqueRunDV.size() != 1 ) {
+            throw new IllegalArgumentException("Sample ${sampleId} has inconsistent runDV values: ${uniqueRunDV}")
+        }
+        tuple(sampleId, uniqueRunDV[0], cramFiles[0], craiFiles[0])
+    }
     //Quality of alignments
-    //MERGEB.out.mbams.view()
-    QUALIMAP(MERGEB.out.mbams,ref,ref_fai)
+    QUALIMAP(analysis_crams,ref,ref_fai)
     //Coverage Stats from cram files
-    DEPTH(MERGEB.out.mbams)
+    DEPTH(analysis_crams)
     //variant calling witn DeepVariant
-    deepvariant_autosomes_samples = MERGEB.out.mbams.filter { sampleId, runDV, cram, crai -> runDV }
+    deepvariant_autosomes_samples = analysis_crams.filter { sampleId, runDV, cram, crai -> runDV }
     DEEPVARIANT_AUTOSOMES(deepvariant_autosomes_samples,ref,ref_fai)
     allgvcf=DEEPVARIANT_AUTOSOMES.out.gvcf_file.collect().filter { gvcf_list -> gvcf_list }.map { gvcf_list ->
         tuple('all', gvcf_list)
@@ -504,7 +562,7 @@ workflow {
     //allgvcf.view()
     GLNEXUS_DEEPVARIANT_AUTOSOMES(allgvcf)
     bed_sex=file("${baseDir}/aux/GRCh38_PAR.bed")
-    deepvariant_sex_samples = MERGEB.out.mbams.filter { sampleId, runDV, cram, crai -> runDV }
+    deepvariant_sex_samples = analysis_crams.filter { sampleId, runDV, cram, crai -> runDV }
     DEEPVARIANT_SEX(deepvariant_sex_samples,ref,ref_fai,bed_sex)
     allgvcfsex=DEEPVARIANT_SEX.out.gvcf_file.collect().filter { gvcf_list -> gvcf_list }.map { gvcf_list ->
         tuple('all', gvcf_list)

@@ -1,7 +1,7 @@
 
 # alndv
 
-A nextflow (DSL 2) Whole‑Genome Short‑Read Pipeline (BWA‑MEM2 → DeepVariant → GLnexus) for small‑variant discovery from paired‑end FASTQ files.
+A nextflow (DSL 2) Whole‑Genome Short‑Read Pipeline (BWA‑MEM2 → DeepVariant → GLnexus) for small‑variant discovery from paired‑end FASTQ files or pre-aligned CRAM files.
 
 
 ---
@@ -9,7 +9,9 @@ A nextflow (DSL 2) Whole‑Genome Short‑Read Pipeline (BWA‑MEM2 → DeepV
 
 ```
 
-FASTQ ─► FASTQC ─► BWA‑MEM2 ──► MERGEB ─► QUALIMAP 
+FASTQ ─► FASTQC ─► BWA‑MEM2 ─┐
+                              ├─► MERGEB ─► QUALIMAP
+CRAM + CRAI (skip alignment) ─┘
                                    └─► DEPTH (mosdepth)
                                    └─► DEEPVARIANT_AUTOSOMES ─┬─► per‑sample VCF
                                    |         |                └─► per‑sample gVCF
@@ -76,7 +78,7 @@ nextflow run main.nf --csv reads-test.cvs --ref test.fa --debug true
 | Flag      | Description                                                  |
 | --------- | ------------------------------------------------------------ |
 | `--reads` | Glob pattern for paired FASTQ (`sample_*{1,2}.fq.gz`) **or** |
-| `--csv`   | CSV with columns `sampleId,part,runDV,read1,read2`           |
+| `--csv`   | CSV containing FASTQ (`read1,read2`) or CRAM (`cram,crai`) rows |
 | `--ref`   | Reference FASTA indexed with `.fai` and `.dict`              |
 
 Example CSV:
@@ -89,6 +91,26 @@ sampleB,1,false,/data/sampleB_R1.fastq.gz,/data/sampleB_R2.fastq.gz
 ```
 
 `runDV` accepts `true/false`, `yes/no`, or `1/0`. When the column is omitted or left blank, the pipeline defaults to `true` to preserve the previous behavior.
+
+To start from an existing merged alignment and skip FASTQC, BWA, and MERGEB, use `cram` and `crai`
+instead of `read1` and `read2`. A samplesheet may mix both input types; each row
+must populate exactly one pair of input columns. Each CRAM sample must occur once
+because its input is assumed to have already been merged. `part` is ignored for CRAM rows.
+
+```csv
+sampleId,part,runDV,read1,read2,cram,crai
+sampleA,1,true,/data/sampleA_R1.fastq.gz,/data/sampleA_R2.fastq.gz,,
+sampleB,1,true,,,/data/sampleB.cram,/data/sampleB.cram.crai
+```
+
+The repository includes a CRAM-only stub fixture. It exercises the whole DAG
+without reading a real CRAM or running the bioinformatics tools:
+
+```bash
+nextflow run main.nf -stub-run -c tests/stub/nextflow.config \
+  --csv tests/stub/cram_samplesheet.csv \
+  --ref tests/stub/stub.fa --debug true
+```
 
 ---
 
